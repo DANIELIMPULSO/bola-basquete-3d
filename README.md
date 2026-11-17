@@ -4,6 +4,6 @@ Bola de basquete modelada e texturizada no Blender e exibida no navegador com Th
 
 **Ver online:** https://danielimpulso.github.io/bola-basquete-3d/
 
-- `index.html`: bola de partículas neon com física: arraste e solte para girar; quicar, quicar pelo ambiente, pular e girar, rolar devagar/rápido, explodir; painel de ajustes com sliders
+- `index.html`: bola de partículas neon com física: arraste e solte para girar; quicar, quicar pelo ambiente, pular e girar, rolar devagar/rápido, explodir; painel de ajustes com sliders; 6 formas (bola, cubo, rosquinha, nó, hélice de DNA e logo IMPULSO) com transição animada
 - `classica.html`: versão texturizada da bola
 - `bola_basquete.glb`: o modelo 3D com as texturas de cor, rugosidade e normal

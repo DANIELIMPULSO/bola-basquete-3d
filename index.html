@@ -80,7 +80,7 @@ const SLIDERS = [
 const P = {...DEF};
 
 const R = 0.12, REST = 0.8, WALL = 0.9, ROLL_R = 0.38;
-const N_BODY = 16000, N_SEAM = 6000, N = N_BODY + N_SEAM;
+const N = 22000;
 const CREL = 13, CABS = 0.6, SPREAD = 0.00045, GRAV_P = -1.0, DRAG = 2.3, STOP_V = 0.05, MAG_GAIN = 2.2, MAG_RAMP = 1.3;
 
 // ---------- cena
@@ -138,25 +138,108 @@ const rest = new Float32Array(N * 3), pos = new Float32Array(N * 3), vel = new F
 const col = new Float32Array(N * 3), stiff = new Float32Array(N), seamFlag = new Uint8Array(N), loose = new Float32Array(N);
 const mode = new Uint8Array(N), magT = new Float32Array(N), varr = new Float32Array(N);
 const tmp = [0, 0, 0];
-let i = 0;
-const golden = Math.PI * (3 - Math.sqrt(5)), M = Math.round(N_BODY * 1.25);
-for (let k = 0; k < M && i < N_BODY; k++) {
-  const yy = 1 - (k + 0.5) / M * 2, rr = Math.sqrt(1 - yy * yy), th = golden * k;
-  const x = rr * Math.cos(th), y = yy, z = rr * Math.sin(th);
-  if (seamDist(x, y, z) < 0.03) continue;
-  rest.set([x, y, z], i * 3);
-  varr[i] = Math.random() * 0.6;
-  stiff[i] = 0.75 + Math.random() * 0.5; i++;
+for (let k = 0; k < N; k++) varr[k] = Math.random() * 0.6;
+const stiffR = new Float32Array(N).map(() => Math.random());
+
+// ---------- formas (pontos em unidades do raio R)
+function makeShape(nAcc, bodyFn, accFn) {
+  const r = new Float32Array(N * 3), f = new Uint8Array(N), o = [0, 0, 0];
+  for (let k = 0; k < N; k++) {
+    const acc = k >= N - nAcc;
+    (acc ? accFn : bodyFn)(o, k); r[k * 3] = o[0]; r[k * 3 + 1] = o[1]; r[k * 3 + 2] = o[2]; f[k] = acc ? 1 : 0;
+  }
+  return {rest: r, flag: f};
 }
-while (i < N_BODY) {
-  randUnit(tmp); if (seamDist(tmp[0], tmp[1], tmp[2]) < 0.03) continue;
-  rest.set(tmp, i * 3); varr[i] = Math.random() * 0.6; stiff[i] = 1; i++;
+const TAU = Math.PI * 2, rnd = (a, b) => a + Math.random() * (b - a);
+const SHAPES = {};
+// 1) bola de basquete
+SHAPES.bola = () => {
+  const nAcc = 6000, nB = N - nAcc, golden = Math.PI * (3 - Math.sqrt(5)), M = Math.round(nB * 1.25), pts = [];
+  for (let k = 0; k < M && pts.length < nB; k++) {
+    const yy = 1 - (k + 0.5) / M * 2, rr = Math.sqrt(1 - yy * yy), th = golden * k;
+    const x = rr * Math.cos(th), z = rr * Math.sin(th);
+    if (seamDist(x, yy, z) >= 0.03) pts.push([x, yy, z]);
+  }
+  while (pts.length < nB) { randUnit(tmp); if (seamDist(...tmp) >= 0.03) pts.push([...tmp]); }
+  return makeShape(nAcc, (o, k) => { o[0] = pts[k][0]; o[1] = pts[k][1]; o[2] = pts[k][2]; },
+    o => { do randUnit(o); while (seamDist(o[0], o[1], o[2]) > 0.016); o[0] *= 0.985; o[1] *= 0.985; o[2] *= 0.985; });
+};
+// 2) cubo: faces no corpo, arestas em destaque
+SHAPES.cubo = () => {
+  const a = 0.66;
+  return makeShape(5500, o => {
+    const face = Math.floor(Math.random() * 6), ax = face >> 1, sg = face & 1 ? 1 : -1, u = rnd(-a, a), v = rnd(-a, a);
+    o[ax] = sg * a; o[(ax + 1) % 3] = u; o[(ax + 2) % 3] = v;
+  }, o => {
+    const e = Math.floor(Math.random() * 12), ax = e >> 2, s1 = e & 1 ? 1 : -1, s2 = e & 2 ? 1 : -1;
+    o[ax] = rnd(-a, a); o[(ax + 1) % 3] = s1 * a; o[(ax + 2) % 3] = s2 * a;
+  });
+};
+// 3) rosquinha (toro)
+SHAPES.rosquinha = () => {
+  const Rm = 0.68, r = 0.32;
+  const P = (u, v, o) => { o[0] = (Rm + r * Math.cos(v)) * Math.cos(u); o[2] = (Rm + r * Math.cos(v)) * Math.sin(u); o[1] = r * Math.sin(v); };
+  return makeShape(5500, o => {
+    let u, v; do { u = rnd(0, TAU); v = rnd(0, TAU); } while (Math.random() > (Rm + r * Math.cos(v)) / (Rm + r));
+    P(u, v, o);
+  }, o => {
+    if (Math.random() < 0.5) P(Math.floor(Math.random() * 8) / 8 * TAU, rnd(0, TAU), o);
+    else P(rnd(0, TAU), Math.floor(Math.random() * 3) / 3 * TAU + 0.3, o);
+    o[0] *= 1.01; o[1] *= 1.01; o[2] *= 1.01;
+  });
+};
+// 4) nó (torus knot 2,3) com uma faixa em espiral
+SHAPES.no = () => {
+  const s = 0.3, tr = 0.115, C = (t, o) => { const c = 2 + Math.cos(3 * t); o[0] = s * c * Math.cos(2 * t); o[1] = s * c * Math.sin(2 * t); o[2] = s * Math.sin(3 * t); };
+  const A = [0, 0, 0], B = [0, 0, 0], T = new THREE.Vector3(), Nn = new THREE.Vector3(), Bn = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+  const tube = (t, phi, rad, o) => {
+    C(t - 1e-3, A); C(t + 1e-3, B); T.set(B[0] - A[0], B[1] - A[1], B[2] - A[2]).normalize();
+    Nn.crossVectors(T, up.set(0, 0, 1)); if (Nn.lengthSq() < 1e-6) Nn.set(1, 0, 0); Nn.normalize(); Bn.crossVectors(T, Nn);
+    C(t, o); const c = Math.cos(phi) * rad, sn = Math.sin(phi) * rad;
+    o[0] += Nn.x * c + Bn.x * sn; o[1] += Nn.y * c + Bn.y * sn; o[2] += Nn.z * c + Bn.z * sn;
+  };
+  return makeShape(5000, o => tube(rnd(0, TAU), rnd(0, TAU), tr, o), o => { const t = rnd(0, TAU); tube(t, t * 5 + (Math.random() < 0.5 ? 0 : Math.PI), tr * 1.02, o); });
+};
+// 5) hélice de DNA: duas fitas e os pares de bases
+SHAPES.dna = () => {
+  const H = 1.0, rd = 0.42, turns = 1.6, tubeR = 0.06, rungs = 22;
+  const ang = y => (y + H) / (2 * H) * turns * TAU;
+  return makeShape(7000, o => {
+    const y = rnd(-H, H), th = ang(y) + (Math.random() < 0.5 ? 0 : Math.PI), ph = rnd(0, TAU);
+    const cx = rd * Math.cos(th), cz = rd * Math.sin(th);
+    o[0] = cx + Math.cos(ph) * tubeR * Math.cos(th); o[2] = cz + Math.cos(ph) * tubeR * Math.sin(th); o[1] = y + Math.sin(ph) * tubeR;
+  }, o => {
+    const j = Math.floor(Math.random() * rungs), y = -H + (j + 0.5) / rungs * 2 * H, th = ang(y), t = rnd(-1, 1) * (rd - tubeR);
+    const ph = rnd(0, TAU), w = 0.025;
+    o[0] = Math.cos(th) * t + Math.cos(ph) * w * -Math.sin(th); o[2] = Math.sin(th) * t + Math.cos(ph) * w * Math.cos(th); o[1] = y + Math.sin(ph) * w;
+  });
+};
+// 6) logo IMPULSO: letras desenhadas num canvas e amostradas
+SHAPES.impulso = () => {
+  const W = 1200, Hh = 260, c = document.createElement('canvas'); c.width = W; c.height = Hh;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.font = '900 210px Arial Black, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('IMPULSO', W / 2, Hh / 2 + 8);
+  const d = g.getImageData(0, 0, W, Hh).data, fill = [], edge = [];
+  const on = (x, y) => x >= 0 && y >= 0 && x < W && y < Hh && d[(y * W + x) * 4 + 3] > 128;
+  let minX = W, maxX = 0;
+  for (let y = 0; y < Hh; y += 1) for (let x = 0; x < W; x += 1) if (on(x, y)) {
+    fill.push(x, y); minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    if (!on(x - 2, y) || !on(x + 2, y) || !on(x, y - 2) || !on(x, y + 2)) edge.push(x, y);
+  }
+  const sc = 4.6 / (maxX - minX), cx = (minX + maxX) / 2, cy = Hh / 2, depth = 0.16;
+  const map = (arr, o, zr) => { const j = Math.floor(Math.random() * arr.length / 2) * 2; o[0] = (arr[j] + Math.random() - cx) * sc; o[1] = -(arr[j + 1] + Math.random() - cy) * sc; o[2] = zr; };
+  return makeShape(6500, o => map(fill, o, (Math.random() < 0.5 ? -1 : 1) * depth * (0.6 + 0.4 * Math.random())), o => map(edge, o, rnd(-depth, depth)));
+};
+const SHAPE_NAMES = {bola: 'Bola', cubo: 'Cubo', rosquinha: 'Rosquinha', no: 'Nó', dna: 'Hélice DNA', impulso: 'IMPULSO'};
+const shapeCache = {};
+let shape = 'bola';
+function loadShape(name) {
+  const S = shapeCache[name] || (shapeCache[name] = SHAPES[name]());
+  rest.set(S.rest); seamFlag.set(S.flag);
+  for (let k = 0; k < N; k++) stiff[k] = seamFlag[k] ? 1.2 + stiffR[k] * 0.4 : 0.75 + stiffR[k] * 0.5;
+  shape = name;
 }
-while (i < N) {
-  randUnit(tmp); if (seamDist(tmp[0], tmp[1], tmp[2]) > 0.016) continue;
-  rest.set([tmp[0] * 0.985, tmp[1] * 0.985, tmp[2] * 0.985], i * 3);
-  stiff[i] = 1.2 + Math.random() * 0.4; seamFlag[i] = 1; i++;
-}
+loadShape('bola');
 const geo = new THREE.BufferGeometry();
 geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
 geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -310,6 +393,23 @@ const COLORS = [['cBody', 'Corpo (tom principal)'], ['cBody2', 'Corpo (variaçã
   }
   holder.appendChild(pr);
 }
+{ // seletor de formas (no topo do painel)
+  const g = document.createElement('div'); g.className = 'grp'; g.textContent = 'Forma'; box.prepend(g);
+  const row = document.createElement('div'); row.className = 'crow'; row.style.flexWrap = 'wrap'; row.style.gap = '6px'; row.style.justifyContent = 'flex-start'; g.after(row);
+  for (const [key, label] of Object.entries(SHAPE_NAMES)) {
+    const b = document.createElement('button'); b.textContent = label; b.dataset.shape = key; b.style.padding = '6px 11px'; b.style.fontSize = '13px';
+    b.classList.toggle('on', key === shape);
+    b.onclick = () => morph(key); row.appendChild(b);
+  }
+}
+function morph(name) {
+  if (name === shape) return;
+  loadShape(name);
+  for (let k = 0; k < N; k++) { mode[k] = 2; magT[k] = 0.15; loose[k] = 0; }
+  boom.phase = 2; boom.t = 0; $('boom').classList.remove('on');
+  document.querySelectorAll('[data-shape]').forEach(b => b.classList.toggle('on', b.dataset.shape === name));
+  paint();
+}
 $('reset').onclick = () => { Object.assign(P, DEF); for (const k in inputs) { inputs[k].inp.value = P[k]; inputs[k].show(); } apply(); };
 paint();
 $('tgl').onclick = () => { $('panel').classList.toggle('open'); $('tgl').classList.toggle('on'); };
@@ -322,7 +422,7 @@ let prev = performance.now();
 const tgtPrev = new Float32Array(N * 3); let first = true;
 const spd = $('spd'), WN = new THREE.Vector3();
 function rollW(out) { return out.set(ball.v.z / R, 0, -ball.v.x / R); }
-const RW = new THREE.Vector3();
+const RW = new THREE.Vector3(), QI = new THREE.Quaternion();
 
 function stepBall(dt) {
   const isRoll = ball.mode === 'rollSlow' || ball.mode === 'rollFast';
@@ -381,7 +481,11 @@ function stepBall(dt) {
     const wl = ball.w.length();
     if (wl > 1e-4) { AX.copy(ball.w).normalize(); dq.setFromAxisAngle(AX, wl * dt); ball.q.premultiply(dq); }
     if (!isRoll) ball.w.multiplyScalar(Math.exp(-dt * 0.35));
-    if (wl < 0.25 && ball.mode === 'idle' && ball.p.y <= R + 1e-3) ball.w.y += (0.35 - ball.w.y) * dt * 0.5;
+    const facing = shape === 'impulso' || shape === 'no';
+    if (facing && ball.mode === 'idle' && wl < 0.6) {
+      // texto e nó voltam a ficar de frente para a câmera quando param
+      ball.w.multiplyScalar(Math.exp(-dt * 2)); ball.q.slerp(QI, Math.min(1, dt * 1.2));
+    } else if (wl < 0.25 && ball.mode === 'idle' && ball.p.y <= R + 1e-3) ball.w.y += (0.35 - ball.w.y) * dt * 0.5;
   }
 }
 
