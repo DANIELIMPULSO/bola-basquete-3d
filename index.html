@@ -176,7 +176,7 @@ $('boom').onclick = () => impulse(2.4, false);
 addEventListener('resize', () => { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); placeCam(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 
 // --- simulação
-const K = 260, CREL = 13, CABS = 0.6, SPREAD = 0.0022;
+const K = 260, CREL = 13, CABS = 0.6, SPREAD = 0.0006;
 let prev = performance.now();
 const tgtPrev = new Float32Array(N * 3); let first = true;
 const spd = $('spd');
@@ -216,7 +216,7 @@ function step(dt) {
     if (w2 > 0.5) {
       const dot = (tx * wx + ty * wy + tz * wz) / w2;
       const px = tx - wx * dot, py = ty - wy * dot, pz = tz - wz * dot;
-      const f = 1 + Math.min(w2 * SPREAD, 0.9) * (seamFlag[k] ? 0.6 : 1);
+      const f = 1 + Math.min(w2 * SPREAD, 0.45) * (seamFlag[k] ? 0.6 : 1);
       tx = wx * dot + px * f; ty = wy * dot + py * f; tz = wz * dot + pz * f;
     }
     tx += bx; ty += by; tz += bz;
