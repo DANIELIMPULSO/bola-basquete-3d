@@ -80,7 +80,7 @@ function randUnit(out) {
 
 // --- partículas
 const rest = new Float32Array(N * 3), pos = new Float32Array(N * 3), vel = new Float32Array(N * 3);
-const col = new Float32Array(N * 3), stiff = new Float32Array(N), seamFlag = new Uint8Array(N);
+const col = new Float32Array(N * 3), stiff = new Float32Array(N), seamFlag = new Uint8Array(N), loose = new Float32Array(N);
 const BODY = new THREE.Color(1.0, 0.36, 0.06), BODY2 = new THREE.Color(1.0, 0.55, 0.15), SEAM = new THREE.Color(0.18, 0.95, 1.0);
 const tmp = [0, 0, 0];
 let i = 0;
@@ -132,6 +132,7 @@ function impulse(strength, dirDown) {
     let f = strength * (0.6 + Math.random() * 0.8);
     if (dirDown) f *= Math.max(0, -ry / l) ** 1.5 * 2.2 + 0.15;
     vel[k * 3] += rx / l * f; vel[k * 3 + 1] += ry / l * f * (dirDown ? 0.4 : 1) + (dirDown ? Math.abs(f) * 0.5 : 0); vel[k * 3 + 2] += rz / l * f;
+    loose[k] = Math.min(1, Math.max(loose[k], Math.abs(f) / strength * 0.75));
   }
 }
 
@@ -172,11 +173,11 @@ $('bounce').onclick = e => {
   bouncing = !bouncing; e.target.classList.toggle('on', bouncing);
   if (bouncing && ball.p.y <= R + 0.001) ball.v.y = Math.sqrt(-2 * GRAV * DROP_H);
 };
-$('boom').onclick = () => impulse(2.4, false);
+$('boom').onclick = () => impulse(2.6, false);
 addEventListener('resize', () => { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); placeCam(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 
 // --- simulação
-const K = 260, CREL = 13, CABS = 0.6, SPREAD = 0.0006;
+const K = 260, CREL = 13, CABS = 0.6, SPREAD = 0.00045, LOOSE_T = 2.2, GRAV_P = -1.2;
 let prev = performance.now();
 const tgtPrev = new Float32Array(N * 3); let first = true;
 const spd = $('spd');
@@ -188,7 +189,7 @@ function step(dt) {
       const impact = -ball.v.y;
       ball.p.y = R;
       if (impact > 0.25) {
-        impulse(Math.min(impact, 4) * 0.55, true);
+        impulse(Math.min(impact, 4) * 1.15, true);
         ball.squash = Math.min(0.22, impact * 0.05);
         ball.v.y = bouncing ? Math.max(impact * REST, Math.sqrt(-2 * GRAV * DROP_H)) : impact * REST * 0.85;
         ball.w.x += (Math.random() - 0.5) * 0.6;
@@ -207,6 +208,8 @@ function step(dt) {
   const e = m3.elements, sq = ball.squash, sy = 1 - sq, sxz = 1 + sq * 0.55;
   const wx = ball.w.x, wy = ball.w.y, wz = ball.w.z, w2 = wx * wx + wy * wy + wz * wz;
   const bx = ball.p.x, by = ball.p.y, bz = ball.p.z;
+  const flingP = Math.min(0.04, Math.max(0, (w2 - 30) * 0.00004)) * dt;
+  const decay = Math.exp(-dt / LOOSE_T), wl = Math.sqrt(w2);
   for (let k = 0; k < N; k++) {
     const k3 = k * 3, rx = rest[k3], ry = rest[k3 + 1], rz = rest[k3 + 2];
     let tx = (e[0] * rx + e[3] * ry + e[6] * rz) * R * sxz;
@@ -216,17 +219,26 @@ function step(dt) {
     if (w2 > 0.5) {
       const dot = (tx * wx + ty * wy + tz * wz) / w2;
       const px = tx - wx * dot, py = ty - wy * dot, pz = tz - wz * dot;
-      const f = 1 + Math.min(w2 * SPREAD, 0.45) * (seamFlag[k] ? 0.6 : 1);
+      const f = 1 + Math.min(w2 * SPREAD, 0.3) * (seamFlag[k] ? 0.6 : 1);
       tx = wx * dot + px * f; ty = wy * dot + py * f; tz = wz * dot + pz * f;
     }
     tx += bx; ty += by; tz += bz;
     const tvx = first ? 0 : (tx - tgtPrev[k3]) / dt, tvy = first ? 0 : (ty - tgtPrev[k3 + 1]) / dt, tvz = first ? 0 : (tz - tgtPrev[k3 + 2]) / dt;
     tgtPrev[k3] = tx; tgtPrev[k3 + 1] = ty; tgtPrev[k3 + 2] = tz;
-    const kk = K * stiff[k];
     let vx = vel[k3], vy = vel[k3 + 1], vz = vel[k3 + 2];
-    vx += (kk * (tx - pos[k3]) - CREL * (vx - tvx) - CABS * vx) * dt;
-    vy += (kk * (ty - pos[k3 + 1]) - CREL * (vy - tvy) - CABS * vy) * dt;
-    vz += (kk * (tz - pos[k3 + 2]) - CREL * (vz - tvz) - CABS * vz) * dt;
+    if (flingP > 0 && !dragging && Math.random() < flingP) {
+      const ox = pos[k3] - bx, oy = pos[k3 + 1] - by, oz = pos[k3 + 2] - bz, ol = Math.hypot(ox, oy, oz) || 1;
+      const kick = wl * R * (0.5 + Math.random() * 1.1);
+      vx += (wy * oz - wz * oy) * 0.5 + ox / ol * kick; vy += (wz * ox - wx * oz) * 0.5 + oy / ol * kick * 0.6 + kick * 0.25; vz += (wx * oy - wy * ox) * 0.5 + oz / ol * kick;
+      loose[k] = 1;
+    }
+    let lo = loose[k];
+    if (lo > 0.002) { lo *= decay; loose[k] = lo; } else lo = 0;
+    const sfac = 1 - 0.97 * lo * lo * (3 - 2 * lo);
+    const kk = K * stiff[k] * sfac, cr = CREL * Math.sqrt(sfac) + 0.8 * lo;
+    vx += (kk * (tx - pos[k3]) - cr * (vx - tvx) - CABS * vx) * dt;
+    vy += (kk * (ty - pos[k3 + 1]) - cr * (vy - tvy) - CABS * vy + GRAV_P * lo) * dt;
+    vz += (kk * (tz - pos[k3 + 2]) - cr * (vz - tvz) - CABS * vz) * dt;
     let nx = pos[k3] + vx * dt, ny = pos[k3 + 1] + vy * dt, nz = pos[k3 + 2] + vz * dt;
     if (ny < 0.0015) { ny = 0.0015; vy = Math.abs(vy) * 0.3; vx *= 0.9; vz *= 0.9; }
     pos[k3] = nx; pos[k3 + 1] = ny; pos[k3 + 2] = nz; vel[k3] = vx; vel[k3 + 1] = vy; vel[k3 + 2] = vz;
