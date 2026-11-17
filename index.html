@@ -4,20 +4,36 @@
 <style>
 html,body{margin:0;height:100%;background:#05060a;font-family:system-ui,sans-serif;overflow:hidden;color:#ccc;touch-action:none;user-select:none}
 canvas{display:block;cursor:grab}canvas.drag{cursor:grabbing}
-#ui{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
-button,a.btn{border:1px solid #ff7a1f;border-radius:999px;padding:10px 18px;background:rgba(0,0,0,.4);color:#f2f2f2;font-size:14px;cursor:pointer;text-decoration:none;font-family:inherit}
+#ui{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:8px;flex-wrap:wrap;justify-content:center;width:min(96vw,760px)}
+button,a.btn{border:1px solid #ff7a1f;border-radius:999px;padding:9px 16px;background:rgba(0,0,0,.45);color:#f2f2f2;font-size:14px;cursor:pointer;text-decoration:none;font-family:inherit}
 button.on{background:#ff7a1f;color:#111}
-a.btn{border-color:#2ff0ff}
-#hint{position:fixed;top:18px;width:100%;text-align:center;color:#8a8f99;font-size:14px;pointer-events:none}
-#spd{position:fixed;top:44px;width:100%;text-align:center;color:#2ff0ff;font-size:13px;pointer-events:none;font-variant-numeric:tabular-nums}
+a.btn,#tgl{border-color:#2ff0ff}
+#tgl.on{background:#2ff0ff;color:#06121a}
+#hint{position:fixed;top:16px;width:100%;text-align:center;color:#8a8f99;font-size:14px;pointer-events:none;padding:0 12px;box-sizing:border-box}
+#spd{position:fixed;top:42px;width:100%;text-align:center;color:#2ff0ff;font-size:13px;pointer-events:none;font-variant-numeric:tabular-nums}
+#panel{position:fixed;top:70px;right:14px;width:260px;max-height:calc(100vh - 190px);overflow:auto;background:rgba(8,10,16,.88);border:1px solid #1f3442;border-radius:12px;padding:12px 14px;display:none;font-size:13px}
+#panel.open{display:block}
+#panel label{display:block;margin:10px 0 2px;color:#cfd6df}
+#panel .row{display:flex;align-items:center;gap:8px}
+#panel input[type=range]{flex:1;accent-color:#ff7a1f}
+#panel output{width:44px;text-align:right;color:#2ff0ff;font-variant-numeric:tabular-nums}
+#panel h3{margin:0 0 4px;font-size:14px;font-weight:500;color:#fff}
+#panel .grp{margin-top:12px;color:#ff9a55;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+#reset{margin-top:14px;width:100%}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head><body>
 <div id="hint">Clique, arraste e solte: quanto mais rápido o gesto, mais rápido a bola gira · role para zoom</div>
 <div id="spd"></div>
+<div id="panel"><h3>Ajustes da simulação</h3><div id="sliders"></div><button id="reset">Restaurar padrão</button></div>
 <div id="ui">
-<button id="bounce">Quicar</button>
+<button data-mode="bounce">Quicar</button>
+<button data-mode="roam">Quicar pelo ambiente</button>
+<button id="jump">Pular e girar</button>
+<button data-mode="rollSlow">Rolar devagar</button>
+<button data-mode="rollFast">Rolar rápido</button>
 <button id="boom">Explodir</button>
+<button id="tgl">Ajustes</button>
 <a class="btn" href="classica.html">Versão texturizada</a>
 </div>
 <script type="module">
@@ -27,10 +43,43 @@ import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 
-const R = 0.12, GRAV = -3.2, REST = 0.8, DROP_H = 0.32;
-const V_DROP = Math.sqrt(-2 * GRAV * DROP_H);
-const N_BODY = 16000, N_SEAM = 6000, N = N_BODY + N_SEAM;
+// ---------- parâmetros ajustáveis
+const DEF = {
+  grav: 1.4, dropH: 0.7, impact: 2.4, roamSpeed: 0.5,
+  rollSlow: 0.25, rollFast: 1.4, jumpH: 0.9, jumpSpin: 24,
+  boomForce: 1.0, boomReturn: 0.9, contractT: 0.75,
+  fling: 1.0, looseT: 2.0, spring: 260,
+  bloom: 0.85, size: 0.0034
+};
+const SLIDERS = [
+  ['Quique'],
+  ['grav', 'Gravidade (menor = mais tempo no ar)', 0.5, 9.8, 0.1, 'm/s²'],
+  ['dropH', 'Altura do quique', 0.1, 1.5, 0.01, 'm'],
+  ['impact', 'Força do impacto nas partículas', 0, 6, 0.1, ''],
+  ['roamSpeed', 'Velocidade pelo ambiente', 0.2, 2.5, 0.05, 'm/s'],
+  ['Rolar e pular'],
+  ['rollSlow', 'Rolar devagar', 0.05, 1, 0.01, 'm/s'],
+  ['rollFast', 'Rolar rápido', 0.5, 3.5, 0.05, 'm/s'],
+  ['jumpH', 'Altura do pulo', 0.2, 2, 0.05, 'm'],
+  ['jumpSpin', 'Giro do pulo', 5, 60, 1, 'rad/s'],
+  ['Explosão'],
+  ['boomForce', 'Força da explosão', 0.2, 3, 0.05, '×'],
+  ['boomReturn', 'Velocidade de volta (ímã)', 0.15, 3, 0.05, 'm/s'],
+  ['contractT', 'Tempo de contração', 0.2, 2, 0.05, 's'],
+  ['Partículas'],
+  ['fling', 'Desgarre no giro', 0, 5, 0.1, '×'],
+  ['looseT', 'Tempo para voltar (soltas)', 0.5, 8, 0.1, 's'],
+  ['spring', 'Elasticidade da forma', 60, 600, 10, ''],
+  ['bloom', 'Brilho neon', 0, 2.5, 0.05, ''],
+  ['size', 'Tamanho das partículas', 0.0015, 0.008, 0.0001, '']
+];
+const P = {...DEF};
 
+const R = 0.12, REST = 0.8, WALL = 0.9, ROLL_R = 0.38;
+const N_BODY = 16000, N_SEAM = 6000, N = N_BODY + N_SEAM;
+const CREL = 13, CABS = 0.6, SPREAD = 0.00045, GRAV_P = -1.0, DRAG = 2.3, STOP_V = 0.05, MAG_GAIN = 2.2, MAG_RAMP = 1.3;
+
+// ---------- cena
 const renderer = new THREE.WebGLRenderer({antialias: false});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -38,24 +87,24 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x05060a);
 const cam = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.01, 50);
-let camDist = 1.3;
+let camDist = 1.4;
 const LOOK = new THREE.Vector3(0, 0.22, 0);
+let camH = 0;
 function placeCam() {
   const fit = Math.max(1, 0.9 / cam.aspect);
-  const d = camDist * fit;
-  cam.position.set(0, LOOK.y + d * 0.28, d);
+  const d = camDist * fit * (1 + camH * 0.7);
+  cam.position.set(LOOK.x, LOOK.y + d * 0.3, LOOK.z + d);
   cam.lookAt(LOOK);
 }
 placeCam();
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, cam));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.85, 0.35, 0.12);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), P.bloom, 0.35, 0.12);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
-// chão: grade sutil + brilho sob a bola
-const grid = new THREE.GridHelper(6, 60, 0x1b2a3a, 0x0e1520);
+const grid = new THREE.GridHelper(8, 80, 0x1b2a3a, 0x0e1520);
 grid.material.transparent = true; grid.material.opacity = 0.55;
 scene.add(grid);
 function glowTex() {
@@ -67,8 +116,11 @@ function glowTex() {
 }
 const glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({map: glowTex(), color: 0xff6a1a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false}));
 glow.rotation.x = -Math.PI / 2; glow.position.y = 0.001; scene.add(glow);
+// limites da arena (só aparecem no modo "pelo ambiente")
+const arena = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(WALL * 2 + R * 2, 0.002, WALL * 2 + R * 2)), new THREE.LineBasicMaterial({color: 0x2ff0ff, transparent: true, opacity: 0}));
+arena.position.y = 0.001; scene.add(arena);
 
-// --- desenho das costuras (mesmo padrão usado no Blender)
+// ---------- partículas
 function seamDist(x, y, z) {
   const d = Math.min(Math.abs(x), Math.abs(y));
   const c = Math.abs(Math.abs(z) - (0.62 + 0.30 * (y * y - x * x)));
@@ -78,19 +130,16 @@ function randUnit(out) {
   const u = Math.random() * 2 - 1, t = Math.random() * Math.PI * 2, s = Math.sqrt(1 - u * u);
   out[0] = s * Math.cos(t); out[1] = u; out[2] = s * Math.sin(t);
 }
-
-// --- partículas
 const rest = new Float32Array(N * 3), pos = new Float32Array(N * 3), vel = new Float32Array(N * 3);
 const col = new Float32Array(N * 3), stiff = new Float32Array(N), seamFlag = new Uint8Array(N), loose = new Float32Array(N);
 const mode = new Uint8Array(N), magT = new Float32Array(N);
 const BODY = new THREE.Color(1.0, 0.36, 0.06), BODY2 = new THREE.Color(1.0, 0.55, 0.15), SEAM = new THREE.Color(0.18, 0.95, 1.0);
 const tmp = [0, 0, 0];
 let i = 0;
-const golden = Math.PI * (3 - Math.sqrt(5));
-const M = Math.round(N_BODY * 1.25);
+const golden = Math.PI * (3 - Math.sqrt(5)), M = Math.round(N_BODY * 1.25);
 for (let k = 0; k < M && i < N_BODY; k++) {
   const yy = 1 - (k + 0.5) / M * 2, rr = Math.sqrt(1 - yy * yy), th = golden * k;
-  let x = rr * Math.cos(th), y = yy, z = rr * Math.sin(th);
+  const x = rr * Math.cos(th), y = yy, z = rr * Math.sin(th);
   if (seamDist(x, y, z) < 0.03) continue;
   rest.set([x, y, z], i * 3);
   const c = BODY.clone().lerp(BODY2, Math.random() * 0.6);
@@ -102,43 +151,40 @@ while (i < N_BODY) {
   rest.set(tmp, i * 3); col.set([BODY.r, BODY.g, BODY.b], i * 3); stiff[i] = 1; i++;
 }
 while (i < N) {
-  randUnit(tmp);
-  if (seamDist(tmp[0], tmp[1], tmp[2]) > 0.016) continue;
-  const s = 0.985;
-  rest.set([tmp[0] * s, tmp[1] * s, tmp[2] * s], i * 3);
+  randUnit(tmp); if (seamDist(tmp[0], tmp[1], tmp[2]) > 0.016) continue;
+  rest.set([tmp[0] * 0.985, tmp[1] * 0.985, tmp[2] * 0.985], i * 3);
   col.set([SEAM.r, SEAM.g, SEAM.b], i * 3);
   stiff[i] = 1.2 + Math.random() * 0.4; seamFlag[i] = 1; i++;
 }
 const geo = new THREE.BufferGeometry();
 geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
 geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-const dot = glowTex();
-const mat = new THREE.PointsMaterial({size: 0.0034, map: dot, alphaTest: 0.01, vertexColors: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true});
+const mat = new THREE.PointsMaterial({size: P.size, map: glowTex(), alphaTest: 0.01, vertexColors: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true});
 const points = new THREE.Points(geo, mat);
 points.frustumCulled = false;
 scene.add(points);
 
-// --- estado da bola
-const ball = {p: new THREE.Vector3(0, R, 0), v: new THREE.Vector3(), q: new THREE.Quaternion(), w: new THREE.Vector3(0, 0.6, 0), squash: 0};
-let bouncing = false;
+// ---------- bola
+const ball = {p: new THREE.Vector3(0, R, 0), v: new THREE.Vector3(), q: new THREE.Quaternion(), w: new THREE.Vector3(0, 0.6, 0), squash: 0, mode: 'idle', rollSp: 0};
 window.ball = ball;
-const m3 = new THREE.Matrix3(), qm = new THREE.Matrix4();
-for (let k = 0; k < N; k++) {
-  pos[k * 3] = rest[k * 3] * R; pos[k * 3 + 1] = rest[k * 3 + 1] * R + R; pos[k * 3 + 2] = rest[k * 3 + 2] * R;
-}
+for (let k = 0; k < N; k++) { pos[k * 3] = rest[k * 3] * R; pos[k * 3 + 1] = rest[k * 3 + 1] * R + R; pos[k * 3 + 2] = rest[k * 3 + 2] * R; }
+const vDrop = () => Math.sqrt(2 * P.grav * P.dropH);
 
-function impulse(strength, dirDown) {
+function impulse(strength, dir) {
+  // dir: 'down' (chão), 'all' (explosão leve) ou um vetor normal de parede
   for (let k = 0; k < N; k++) {
     const rx = pos[k * 3] - ball.p.x, ry = pos[k * 3 + 1] - ball.p.y, rz = pos[k * 3 + 2] - ball.p.z;
     const l = Math.hypot(rx, ry, rz) || 1;
     let f = strength * (0.6 + Math.random() * 0.8);
-    if (dirDown) f *= Math.max(0, -ry / l) ** 1.5 * 2.2 + 0.15;
-    vel[k * 3] += rx / l * f; vel[k * 3 + 1] += ry / l * f * (dirDown ? 0.4 : 1) + (dirDown ? Math.abs(f) * 0.5 : 0); vel[k * 3 + 2] += rz / l * f;
-    loose[k] = Math.min(1, Math.max(loose[k], Math.abs(f) / strength * 0.75));
+    if (dir === 'down') f *= Math.max(0, -ry / l) ** 1.5 * 2.2 + 0.15;
+    else if (dir && dir.isVector3) f *= Math.max(0, -(rx * dir.x + rz * dir.z) / l) ** 1.5 * 2.2 + 0.1;
+    if (f < 0.02) continue;
+    vel[k * 3] += rx / l * f; vel[k * 3 + 1] += ry / l * f * (dir === 'down' ? 0.4 : 1) + (dir === 'down' ? f * 0.5 : 0); vel[k * 3 + 2] += rz / l * f;
+    loose[k] = Math.min(1, Math.max(loose[k], f / Math.max(strength, 1e-3) * 0.75));
   }
 }
 
-// --- arrastar para girar (o giro herda a velocidade do gesto)
+// ---------- girar com o gesto
 const el = renderer.domElement;
 let dragging = false, last = null, samples = [];
 const AX = new THREE.Vector3(), dq = new THREE.Quaternion();
@@ -165,15 +211,35 @@ function release(e) {
     const w = new THREE.Vector3(); recent.forEach(s => w.add(s.w)); w.divideScalar(recent.length);
     if (w.length() > 60) w.setLength(60);
     ball.w.copy(w);
+    if (ball.mode === 'rollSlow' || ball.mode === 'rollFast') setMode('idle');
   }
 }
 el.addEventListener('pointerup', release); el.addEventListener('pointercancel', release);
-el.addEventListener('wheel', e => { camDist = THREE.MathUtils.clamp(camDist * (1 + e.deltaY * 0.001), 0.45, 3); placeCam(); e.preventDefault(); }, {passive: false});
+el.addEventListener('wheel', e => { camDist = THREE.MathUtils.clamp(camDist * (1 + e.deltaY * 0.001), 0.45, 4); e.preventDefault(); }, {passive: false});
 
+// ---------- botões
 const $ = id => document.getElementById(id);
-$('bounce').onclick = e => {
-  bouncing = !bouncing; e.target.classList.toggle('on', bouncing);
-  if (bouncing && ball.p.y <= R + 0.001) ball.v.y = Math.sqrt(-2 * GRAV * DROP_H);
+const modeBtns = [...document.querySelectorAll('[data-mode]')];
+function setMode(m) {
+  if (ball.mode === m) m = 'idle';
+  ball.mode = m;
+  modeBtns.forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+  const onFloor = ball.p.y <= R + 1e-3;
+  if (m === 'bounce' && onFloor) ball.v.y = vDrop();
+  if (m === 'roam') {
+    const a = Math.random() * Math.PI * 2, s = P.roamSpeed;
+    ball.v.x = Math.cos(a) * s; ball.v.z = Math.sin(a) * s;
+    if (onFloor) ball.v.y = vDrop();
+  }
+  if (m === 'rollSlow' || m === 'rollFast') ball.rollSp = Math.hypot(ball.v.x, ball.v.z);
+}
+modeBtns.forEach(b => b.onclick = () => setMode(b.dataset.mode));
+$('jump').onclick = () => {
+  if (ball.mode !== 'idle') setMode('idle');
+  ball.v.y = Math.sqrt(2 * P.grav * P.jumpH);
+  const a = Math.random() * Math.PI * 2;
+  ball.w.set(Math.cos(a) * P.jumpSpin, P.jumpSpin * 0.35, Math.sin(a) * P.jumpSpin);
+  impulse(P.impact * 0.6, 'down');
 };
 const boom = {phase: 0, t: 0, active: 0};
 $('boom').onclick = () => { if (boom.phase) return; boom.phase = 1; boom.t = 0; $('boom').classList.add('on'); };
@@ -183,69 +249,131 @@ function burst() {
     let dx = pos[k3] - ball.p.x, dy = pos[k3 + 1] - ball.p.y, dz = pos[k3 + 2] - ball.p.z;
     const l = Math.hypot(dx, dy, dz) || 1;
     dx = dx / l + (Math.random() - 0.5) * 0.35; dy = dy / l + (Math.random() - 0.5) * 0.35 + 0.15; dz = dz / l + (Math.random() - 0.5) * 0.35;
-    const v0 = (0.55 + Math.random() * 0.85) * (seamFlag[k] ? 1.15 : 1);
+    const v0 = (0.55 + Math.random() * 0.85) * (seamFlag[k] ? 1.15 : 1) * P.boomForce;
     vel[k3] = dx * v0; vel[k3 + 1] = dy * v0; vel[k3 + 2] = dz * v0;
     mode[k] = 1; loose[k] = 0;
   }
   boom.phase = 2;
 }
-addEventListener('resize', () => { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); placeCam(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 
-// --- simulação
-const K = 260, CREL = 13, CABS = 0.6, SPREAD = 0.00045, LOOSE_T = 3.0, GRAV_P = -1.0;
-const DRAG = 2.3, STOP_V = 0.05, MAG_MAX = 0.9, MAG_GAIN = 2.2, MAG_RAMP = 1.3, CONTRACT_T = 0.75;
+// ---------- painel de ajustes
+const box = $('sliders'), inputs = {};
+for (const s of SLIDERS) {
+  if (s.length === 1) { const g = document.createElement('div'); g.className = 'grp'; g.textContent = s[0]; box.appendChild(g); continue; }
+  const [key, label, min, max, step, unit] = s;
+  const lab = document.createElement('label'); lab.textContent = label + (unit ? ` (${unit})` : '');
+  const row = document.createElement('div'); row.className = 'row';
+  const inp = document.createElement('input'); Object.assign(inp, {type: 'range', min, max, step, value: P[key]});
+  const out = document.createElement('output');
+  const dec = step < 0.001 ? 4 : step < 0.01 ? 3 : step < 0.1 ? 2 : step < 1 ? 1 : 0;
+  const show = () => out.textContent = (+inp.value).toFixed(key === 'size' ? 4 : dec);
+  inp.oninput = () => { P[key] = +inp.value; show(); apply(); };
+  show(); row.append(inp, out); box.append(lab, row); inputs[key] = {inp, show};
+}
+function apply() { mat.size = P.size; }
+$('reset').onclick = () => { Object.assign(P, DEF); for (const k in inputs) { inputs[k].inp.value = P[k]; inputs[k].show(); } apply(); };
+$('tgl').onclick = () => { $('panel').classList.toggle('open'); $('tgl').classList.toggle('on'); };
+['pointerdown', 'wheel'].forEach(ev => $('panel').addEventListener(ev, e => e.stopPropagation()));
+
+addEventListener('resize', () => { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
+
+// ---------- simulação
 let prev = performance.now();
 const tgtPrev = new Float32Array(N * 3); let first = true;
-const spd = $('spd');
-function step(dt) {
-  // bola: gravidade e quique
-  if (bouncing || ball.p.y > R + 1e-4 || ball.v.y > 0) {
-    ball.v.y += GRAV * dt; ball.p.y += ball.v.y * dt;
+const spd = $('spd'), WN = new THREE.Vector3();
+function rollW(out) { return out.set(ball.v.z / R, 0, -ball.v.x / R); }
+const RW = new THREE.Vector3();
+
+function stepBall(dt) {
+  const isRoll = ball.mode === 'rollSlow' || ball.mode === 'rollFast';
+  const keepBounce = ball.mode === 'bounce' || ball.mode === 'roam';
+  // rolar: segue um círculo no chão
+  if (isRoll) {
+    const target = ball.mode === 'rollSlow' ? P.rollSlow : P.rollFast;
+    ball.rollSp += (target - ball.rollSp) * Math.min(1, dt * 1.2);
+    const r = Math.hypot(ball.p.x, ball.p.z) || 1e-3;
+    let th = Math.atan2(ball.p.z, ball.p.x);
+    const rN = r + (ROLL_R - r) * Math.min(1, dt * 1.5);
+    th += ball.rollSp / ROLL_R * dt;
+    const nx = rN * Math.cos(th), nz = rN * Math.sin(th);
+    ball.v.x = (nx - ball.p.x) / dt; ball.v.z = (nz - ball.p.z) / dt;
+    ball.p.x = nx; ball.p.z = nz;
+  }
+  // vertical: gravidade e quique
+  if (ball.p.y > R + 1e-4 || ball.v.y > 0 || keepBounce) {
+    ball.v.y -= P.grav * dt; ball.p.y += ball.v.y * dt;
     if (ball.p.y < R) {
-      const impact = -ball.v.y;
+      const impact = -ball.v.y, vd = vDrop();
       ball.p.y = R;
       if (impact > 0.12) {
-        impulse(Math.min(impact / V_DROP, 1.5) * 2.4, true);
-        ball.squash = Math.min(0.22, impact * 0.05);
-        ball.v.y = bouncing ? Math.max(impact * REST, V_DROP) : impact * REST * 0.85;
-        ball.w.x += (Math.random() - 0.5) * 0.6;
+        impulse(Math.min(impact / vd, 1.6) * P.impact, 'down');
+        ball.squash = Math.min(0.24, impact / vd * 0.14);
+        ball.v.y = keepBounce ? Math.max(impact * REST, vd) : impact * REST * 0.8;
+        if (ball.mode === 'roam') {
+          const a = (Math.random() - 0.5) * 0.7, c = Math.cos(a), s = Math.sin(a), vx = ball.v.x, vz = ball.v.z;
+          ball.v.x = vx * c - vz * s; ball.v.z = vx * s + vz * c;
+          const sp = Math.hypot(ball.v.x, ball.v.z) || 1; ball.v.x *= P.roamSpeed / sp; ball.v.z *= P.roamSpeed / sp;
+        }
+        if (!dragging && Math.hypot(ball.v.x, ball.v.z) > 0.05) ball.w.lerp(rollW(RW), 0.7);
       } else ball.v.y = 0;
     }
   }
+  if (!isRoll) {
+    ball.p.x += ball.v.x * dt; ball.p.z += ball.v.z * dt;
+    for (const ax of ['x', 'z']) {
+      if (Math.abs(ball.p[ax]) > WALL) {
+        ball.p[ax] = Math.sign(ball.p[ax]) * WALL; ball.v[ax] *= -0.95;
+        WN.set(0, 0, 0); WN[ax] = -Math.sign(ball.p[ax]);
+        impulse(Math.abs(ball.v[ax]) / Math.max(P.roamSpeed, 0.2) * P.impact * 0.6, WN.clone());
+        ball.squash = Math.max(ball.squash, 0.06);
+        ball.w.y += (Math.random() - 0.5) * 3;
+      }
+    }
+    const onFloor = ball.p.y <= R + 1e-3 && Math.abs(ball.v.y) < 1e-3;
+    if (onFloor) {
+      const f = Math.exp(-dt * 0.9); ball.v.x *= f; ball.v.z *= f;
+      if (!dragging && Math.hypot(ball.v.x, ball.v.z) > 0.03) ball.w.copy(rollW(RW));
+    }
+  } else if (!dragging) ball.w.copy(rollW(RW));
   ball.squash *= Math.exp(-dt * 6);
-  // explosão: contrai, ganha força e estoura
-  let contract = 1, jit = 0;
-  if (boom.phase === 1) {
-    boom.t += dt; const c = Math.min(1, boom.t / CONTRACT_T), ce = c * c * c;
-    contract = 1 - 0.4 * ce; jit = 0.006 * ce;
-    bloom.strength = 0.85 + 1.4 * ce;
-    if (c >= 1) burst();
-  }
-  // giro: atrito do ar
+  // giro livre
   if (!dragging) {
     const wl = ball.w.length();
     if (wl > 1e-4) { AX.copy(ball.w).normalize(); dq.setFromAxisAngle(AX, wl * dt); ball.q.premultiply(dq); }
-    ball.w.multiplyScalar(Math.exp(-dt * 0.35));
-    if (wl < 0.25 && !bouncing) ball.w.y += (0.35 - ball.w.y) * dt * 0.5;
+    if (!isRoll) ball.w.multiplyScalar(Math.exp(-dt * 0.35));
+    if (wl < 0.25 && ball.mode === 'idle' && ball.p.y <= R + 1e-3) ball.w.y += (0.35 - ball.w.y) * dt * 0.5;
+  }
+}
+
+const m3 = new THREE.Matrix3(), qm = new THREE.Matrix4();
+function step(dt) {
+  stepBall(dt);
+  let contract = 1, jit = 0;
+  if (boom.phase === 1) {
+    boom.t += dt; const c = Math.min(1, boom.t / P.contractT), ce = c * c * c;
+    contract = 1 - 0.4 * ce; jit = 0.006 * ce;
+    bloom.strength = P.bloom + 1.4 * ce;
+    if (c >= 1) burst();
   }
   qm.makeRotationFromQuaternion(ball.q); m3.setFromMatrix4(qm);
   const e = m3.elements, sq = ball.squash, sy = 1 - sq, sxz = 1 + sq * 0.55;
   const wx = ball.w.x, wy = ball.w.y, wz = ball.w.z, w2 = wx * wx + wy * wy + wz * wz;
   const bx = ball.p.x, by = ball.p.y, bz = ball.p.z;
-  const flingP = Math.min(0.04, Math.max(0, (w2 - 30) * 0.00004)) * dt;
-  const decay = Math.exp(-dt / LOOSE_T), wl = Math.sqrt(w2), fdrag = Math.exp(-DRAG * dt), blendM = 1 - Math.exp(-6 * dt);
+  const isRoll = ball.mode === 'rollSlow' || ball.mode === 'rollFast';
+  const flingP = Math.min(0.04, Math.max(0, (w2 - 30) * 0.00004)) * P.fling * dt;
+  const decay = Math.exp(-dt / P.looseT), wl = Math.sqrt(w2), fdrag = Math.exp(-DRAG * dt), blendM = 1 - Math.exp(-6 * dt);
+  const K = P.spring, MAG_MAX = P.boomReturn;
   let active = 0;
   for (let k = 0; k < N; k++) {
     const k3 = k * 3, rx = rest[k3], ry = rest[k3 + 1], rz = rest[k3 + 2];
     let tx = (e[0] * rx + e[3] * ry + e[6] * rz) * R * sxz;
     let ty = (e[1] * rx + e[4] * ry + e[7] * rz) * R * sy;
     let tz = (e[2] * rx + e[5] * ry + e[8] * rz) * R * sxz;
-    // força centrífuga: afasta do eixo de giro
-    if (w2 > 0.5) {
-      const dot = (tx * wx + ty * wy + tz * wz) / w2;
-      const px = tx - wx * dot, py = ty - wy * dot, pz = tz - wz * dot;
+    if (w2 > 0.5 && !isRoll) {
+      const d = (tx * wx + ty * wy + tz * wz) / w2;
+      const px = tx - wx * d, py = ty - wy * d, pz = tz - wz * d;
       const f = 1 + Math.min(w2 * SPREAD, 0.3) * (seamFlag[k] ? 0.6 : 1);
-      tx = wx * dot + px * f; ty = wy * dot + py * f; tz = wz * dot + pz * f;
+      tx = wx * d + px * f; ty = wy * d + py * f; tz = wz * d + pz * f;
     }
     if (contract !== 1) { tx = tx * contract + (Math.random() - 0.5) * jit; ty = ty * contract + (Math.random() - 0.5) * jit; tz = tz * contract + (Math.random() - 0.5) * jit; }
     tx += bx; ty += by; tz += bz;
@@ -256,11 +384,9 @@ function step(dt) {
     if (md) {
       active++;
       if (md === 1) {
-        // voo livre: perde força com o arrasto até quase parar
         vx *= fdrag; vy *= fdrag; vz *= fdrag;
         if (vx * vx + vy * vy + vz * vz < STOP_V * STOP_V) { mode[k] = 2; magT[k] = 0; }
       } else {
-        // ímã: começa devagar, acelera e chega suave
         const ddx = tx - pos[k3], ddy = ty - pos[k3 + 1], ddz = tz - pos[k3 + 2];
         const dist = Math.hypot(ddx, ddy, ddz) || 1e-6;
         const mt = (magT[k] += dt), ramp = Math.min(1, mt / MAG_RAMP), re = ramp * ramp * (3 - 2 * ramp);
@@ -268,24 +394,21 @@ function step(dt) {
         vx += (ddx / dist * sp + tvx - vx) * blendM; vy += (ddy / dist * sp + tvy - vy) * blendM; vz += (ddz / dist * sp + tvz - vz) * blendM;
         if (dist < 0.004) { mode[k] = 0; vx = tvx; vy = tvy; vz = tvz; }
       }
-      let nx = pos[k3] + vx * dt, ny = pos[k3 + 1] + vy * dt, nz = pos[k3 + 2] + vz * dt;
-      if (ny < 0.0015) { ny = 0.0015; vy = Math.abs(vy) * 0.3; }
-      pos[k3] = nx; pos[k3 + 1] = ny; pos[k3 + 2] = nz; vel[k3] = vx; vel[k3 + 1] = vy; vel[k3 + 2] = vz;
-      continue;
+    } else {
+      if (flingP > 0 && !dragging && Math.random() < flingP) {
+        const ox = pos[k3] - bx, oy = pos[k3 + 1] - by, oz = pos[k3 + 2] - bz, ol = Math.hypot(ox, oy, oz) || 1;
+        const kick = wl * R * (0.5 + Math.random() * 1.1);
+        vx += (wy * oz - wz * oy) * 0.5 + ox / ol * kick; vy += (wz * ox - wx * oz) * 0.5 + oy / ol * kick * 0.6 + kick * 0.25; vz += (wx * oy - wy * ox) * 0.5 + oz / ol * kick;
+        loose[k] = 1;
+      }
+      let lo = loose[k];
+      if (lo > 0.002) { lo *= decay; loose[k] = lo; } else lo = 0;
+      const sfac = 1 - 0.97 * lo * lo * (3 - 2 * lo);
+      const kk = K * stiff[k] * sfac, cr = CREL * Math.sqrt(sfac * K / 260) + 0.8 * lo;
+      vx += (kk * (tx - pos[k3]) - cr * (vx - tvx) - CABS * vx) * dt;
+      vy += (kk * (ty - pos[k3 + 1]) - cr * (vy - tvy) - CABS * vy + GRAV_P * lo) * dt;
+      vz += (kk * (tz - pos[k3 + 2]) - cr * (vz - tvz) - CABS * vz) * dt;
     }
-    if (flingP > 0 && !dragging && Math.random() < flingP) {
-      const ox = pos[k3] - bx, oy = pos[k3 + 1] - by, oz = pos[k3 + 2] - bz, ol = Math.hypot(ox, oy, oz) || 1;
-      const kick = wl * R * (0.5 + Math.random() * 1.1);
-      vx += (wy * oz - wz * oy) * 0.5 + ox / ol * kick; vy += (wz * ox - wx * oz) * 0.5 + oy / ol * kick * 0.6 + kick * 0.25; vz += (wx * oy - wy * ox) * 0.5 + oz / ol * kick;
-      loose[k] = 1;
-    }
-    let lo = loose[k];
-    if (lo > 0.002) { lo *= decay; loose[k] = lo; } else lo = 0;
-    const sfac = 1 - 0.97 * lo * lo * (3 - 2 * lo);
-    const kk = K * stiff[k] * sfac, cr = CREL * Math.sqrt(sfac) + 0.8 * lo;
-    vx += (kk * (tx - pos[k3]) - cr * (vx - tvx) - CABS * vx) * dt;
-    vy += (kk * (ty - pos[k3 + 1]) - cr * (vy - tvy) - CABS * vy + GRAV_P * lo) * dt;
-    vz += (kk * (tz - pos[k3 + 2]) - cr * (vz - tvz) - CABS * vz) * dt;
     let nx = pos[k3] + vx * dt, ny = pos[k3 + 1] + vy * dt, nz = pos[k3 + 2] + vz * dt;
     if (ny < 0.0015) { ny = 0.0015; vy = Math.abs(vy) * 0.3; vx *= 0.9; vz *= 0.9; }
     pos[k3] = nx; pos[k3 + 1] = ny; pos[k3 + 2] = nz; vel[k3] = vx; vel[k3 + 1] = vy; vel[k3 + 2] = vz;
@@ -294,16 +417,25 @@ function step(dt) {
   boom.active = active;
   if (boom.phase === 2 && active === 0) { boom.phase = 0; $('boom').classList.remove('on'); }
 }
+
 renderer.setAnimationLoop(now => {
-  let dt = Math.min(0.05, (now - prev) / 1000); prev = now;
-  const sub = Math.ceil(dt / 0.008); dt /= sub;
+  const frame = Math.min(0.05, (now - prev) / 1000); prev = now;
+  const sub = Math.ceil(frame / 0.008), dt = frame / sub;
   for (let s = 0; s < sub; s++) step(dt);
   geo.attributes.position.needsUpdate = true;
+  // câmera acompanha a bola com suavidade
+  const fk = Math.min(1, frame * 2.2);
+  LOOK.x += (ball.p.x * 0.85 - LOOK.x) * fk; LOOK.z += (ball.p.z * 0.85 - LOOK.z) * fk;
+  const hT = Math.max(0, ball.p.y - R); camH += (hT - camH) * Math.min(1, frame * 1.5);
+  LOOK.y = 0.22 + camH * 0.6;
+  placeCam();
   const h = Math.max(0, ball.p.y - R);
+  glow.position.x = ball.p.x; glow.position.z = ball.p.z;
   const gs = 0.42 + h * 0.8; glow.scale.set(gs, gs, 1); glow.material.opacity = 0.16 / (1 + h * 6);
+  arena.material.opacity += ((ball.mode === 'roam' ? 0.18 : 0) - arena.material.opacity) * Math.min(1, frame * 3);
+  if (boom.phase !== 1) bloom.strength += (P.bloom + (boom.phase === 2 ? 0.7 * boom.active / N : 0) - bloom.strength) * Math.min(1, frame * 2);
   const rps = ball.w.length() / (2 * Math.PI);
   spd.textContent = rps > 0.3 ? rps.toFixed(1) + ' voltas/s' : '';
-  if (boom.phase !== 1) bloom.strength += (0.85 + (boom.phase === 2 ? 0.7 * boom.active / N : 0) - bloom.strength) * Math.min(1, dt * sub * 2);
   composer.render();
 });
 </script></body></html>
