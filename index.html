@@ -1,70 +1,247 @@
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bola de basquete 3D</title>
+<title>Bola de basquete neon – partículas</title>
 <style>
-html,body{margin:0;height:100%;background:#1c1d20;font-family:system-ui,sans-serif;overflow:hidden;color:#ddd}
+html,body{margin:0;height:100%;background:#05060a;font-family:system-ui,sans-serif;overflow:hidden;color:#ccc;touch-action:none;user-select:none}
+canvas{display:block;cursor:grab}canvas.drag{cursor:grabbing}
 #ui{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
-button{border:1px solid #e8692c;border-radius:999px;padding:10px 18px;background:transparent;color:#f0f0f0;font-size:14px;cursor:pointer}
-button.on{background:#e8692c;color:#111}
-#hint{position:fixed;top:18px;width:100%;text-align:center;color:#999;font-size:14px}
-#load{position:fixed;inset:0;display:grid;place-items:center;color:#999}
+button,a.btn{border:1px solid #ff7a1f;border-radius:999px;padding:10px 18px;background:rgba(0,0,0,.4);color:#f2f2f2;font-size:14px;cursor:pointer;text-decoration:none;font-family:inherit}
+button.on{background:#ff7a1f;color:#111}
+a.btn{border-color:#2ff0ff}
+#hint{position:fixed;top:18px;width:100%;text-align:center;color:#8a8f99;font-size:14px;pointer-events:none}
+#spd{position:fixed;top:44px;width:100%;text-align:center;color:#2ff0ff;font-size:13px;pointer-events:none;font-variant-numeric:tabular-nums}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head><body>
-<div id="load">Carregando bola…</div>
-<div id="hint">Arraste para girar · role ou pince para zoom</div>
+<div id="hint">Clique, arraste e solte: quanto mais rápido o gesto, mais rápido a bola gira · role para zoom</div>
+<div id="spd"></div>
 <div id="ui">
-<button id="rot" class="on">Girar</button>
 <button id="bounce">Quicar</button>
-<button id="reset">Recentralizar</button>
+<button id="boom">Explodir</button>
+<a class="btn" href="classica.html">Versão texturizada</a>
 </div>
 <script type="module">
 import * as THREE from 'three';
-import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
-import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
-const GLB="bola_basquete.glb";
-const r=new THREE.WebGLRenderer({antialias:true});
-r.setPixelRatio(Math.min(devicePixelRatio,2));r.setSize(innerWidth,innerHeight);
-r.shadowMap.enabled=true;r.shadowMap.type=THREE.PCFSoftShadowMap;
-r.toneMapping=THREE.ACESFilmicToneMapping;r.toneMappingExposure=1.0;
-document.body.appendChild(r.domElement);
-const scene=new THREE.Scene();scene.background=new THREE.Color(0x1c1d20);
-scene.fog=new THREE.Fog(0x1c1d20,2.5,6);
-scene.environment=new THREE.PMREMGenerator(r).fromScene(new RoomEnvironment(),0.04).texture;
-scene.environmentIntensity=0.6;
-const cam=new THREE.PerspectiveCamera(35,innerWidth/innerHeight,0.01,50);
-const HOME=new THREE.Vector3(0.55,0.32,0.75);cam.position.copy(HOME);
-const key=new THREE.DirectionalLight(0xfff4e8,2.2);key.position.set(1.2,2.2,1.0);key.castShadow=true;
-key.shadow.mapSize.set(2048,2048);key.shadow.radius=6;Object.assign(key.shadow.camera,{left:-0.6,right:0.6,top:0.6,bottom:-0.6,near:0.1,far:6});scene.add(key);
-const rim=new THREE.DirectionalLight(0x9fb8ff,0.8);rim.position.set(-1.5,0.8,-1.2);scene.add(rim);
-const floor=new THREE.Mesh(new THREE.PlaneGeometry(20,20),new THREE.MeshStandardMaterial({color:0x2a2b2f,roughness:0.85}));
-floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
-const ctl=new OrbitControls(cam,r.domElement);ctl.enableDamping=true;ctl.autoRotate=true;ctl.autoRotateSpeed=1.2;
-ctl.minDistance=0.3;ctl.maxDistance=3;ctl.maxPolarAngle=Math.PI*0.49;
-const TARGET=new THREE.Vector3(0,0.12,0);ctl.target.copy(TARGET);
-let ball=null,rad=0.12,bouncing=false,t0=0;
-new GLTFLoader().load(GLB,g=>{
-  ball=new THREE.Group();const m=g.scene;
-  const box=new THREE.Box3().setFromObject(m),c=box.getCenter(new THREE.Vector3()),s=box.getSize(new THREE.Vector3());
-  m.position.sub(c);rad=Math.max(s.x,s.y,s.z)/2;
-  m.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
-  ball.add(m);ball.position.y=rad;scene.add(ball);
-  TARGET.set(0,rad,0);ctl.target.copy(TARGET);ctl.update();document.getElementById('load').remove();
-});
-const $=id=>document.getElementById(id);
-$('rot').onclick=e=>{ctl.autoRotate=!ctl.autoRotate;e.target.classList.toggle('on',ctl.autoRotate)};
-$('bounce').onclick=e=>{bouncing=!bouncing;t0=performance.now();e.target.classList.toggle('on',bouncing);if(!bouncing&&ball){ball.position.y=rad;ball.scale.set(1,1,1)}};
-$('reset').onclick=()=>{cam.position.copy(HOME);ctl.target.copy(TARGET)};
-addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();r.setSize(innerWidth,innerHeight)});
-r.setAnimationLoop(now=>{
-  if(ball&&bouncing){
-    const T=0.7,p=((now-t0)/1000%T)/T,h=4*p*(1-p);
-    const y=rad+h*0.16;let sq=1;
-    if(h<0.06){sq=1-0.12*(1-h/0.06);}
-    ball.position.y=rad*sq+(y-rad);ball.scale.set(1+(1-sq)*0.6,sq,1+(1-sq)*0.6);
-    ball.rotation.x+=0.03;
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+
+const R = 0.12, GRAV = -9.8, REST = 0.8, DROP_H = 0.32;
+const N_BODY = 16000, N_SEAM = 6000, N = N_BODY + N_SEAM;
+
+const renderer = new THREE.WebGLRenderer({antialias: false});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05060a);
+const cam = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.01, 50);
+let camDist = 1.3;
+const LOOK = new THREE.Vector3(0, 0.22, 0);
+function placeCam() {
+  const fit = Math.max(1, 0.9 / cam.aspect);
+  const d = camDist * fit;
+  cam.position.set(0, LOOK.y + d * 0.28, d);
+  cam.lookAt(LOOK);
+}
+placeCam();
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, cam));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.85, 0.35, 0.12);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// chão: grade sutil + brilho sob a bola
+const grid = new THREE.GridHelper(6, 60, 0x1b2a3a, 0x0e1520);
+grid.material.transparent = true; grid.material.opacity = 0.55;
+scene.add(grid);
+function glowTex() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+const glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({map: glowTex(), color: 0xff6a1a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false}));
+glow.rotation.x = -Math.PI / 2; glow.position.y = 0.001; scene.add(glow);
+
+// --- desenho das costuras (mesmo padrão usado no Blender)
+function seamDist(x, y, z) {
+  const d = Math.min(Math.abs(x), Math.abs(y));
+  const c = Math.abs(Math.abs(z) - (0.62 + 0.30 * (y * y - x * x)));
+  return Math.min(d, c * 0.85);
+}
+function randUnit(out) {
+  const u = Math.random() * 2 - 1, t = Math.random() * Math.PI * 2, s = Math.sqrt(1 - u * u);
+  out[0] = s * Math.cos(t); out[1] = u; out[2] = s * Math.sin(t);
+}
+
+// --- partículas
+const rest = new Float32Array(N * 3), pos = new Float32Array(N * 3), vel = new Float32Array(N * 3);
+const col = new Float32Array(N * 3), stiff = new Float32Array(N), seamFlag = new Uint8Array(N);
+const BODY = new THREE.Color(1.0, 0.36, 0.06), BODY2 = new THREE.Color(1.0, 0.55, 0.15), SEAM = new THREE.Color(0.18, 0.95, 1.0);
+const tmp = [0, 0, 0];
+let i = 0;
+const golden = Math.PI * (3 - Math.sqrt(5));
+const M = Math.round(N_BODY * 1.25);
+for (let k = 0; k < M && i < N_BODY; k++) {
+  const yy = 1 - (k + 0.5) / M * 2, rr = Math.sqrt(1 - yy * yy), th = golden * k;
+  let x = rr * Math.cos(th), y = yy, z = rr * Math.sin(th);
+  if (seamDist(x, y, z) < 0.03) continue;
+  rest.set([x, y, z], i * 3);
+  const c = BODY.clone().lerp(BODY2, Math.random() * 0.6);
+  col.set([c.r, c.g, c.b], i * 3);
+  stiff[i] = 0.75 + Math.random() * 0.5; i++;
+}
+while (i < N_BODY) {
+  randUnit(tmp); if (seamDist(tmp[0], tmp[1], tmp[2]) < 0.03) continue;
+  rest.set(tmp, i * 3); col.set([BODY.r, BODY.g, BODY.b], i * 3); stiff[i] = 1; i++;
+}
+while (i < N) {
+  randUnit(tmp);
+  if (seamDist(tmp[0], tmp[1], tmp[2]) > 0.016) continue;
+  const s = 0.985;
+  rest.set([tmp[0] * s, tmp[1] * s, tmp[2] * s], i * 3);
+  col.set([SEAM.r, SEAM.g, SEAM.b], i * 3);
+  stiff[i] = 1.2 + Math.random() * 0.4; seamFlag[i] = 1; i++;
+}
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+const dot = glowTex();
+const mat = new THREE.PointsMaterial({size: 0.0034, map: dot, alphaTest: 0.01, vertexColors: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true});
+const points = new THREE.Points(geo, mat);
+points.frustumCulled = false;
+scene.add(points);
+
+// --- estado da bola
+const ball = {p: new THREE.Vector3(0, R, 0), v: new THREE.Vector3(), q: new THREE.Quaternion(), w: new THREE.Vector3(0, 0.6, 0), squash: 0};
+let bouncing = false;
+window.ball = ball;
+const m3 = new THREE.Matrix3(), qm = new THREE.Matrix4();
+for (let k = 0; k < N; k++) {
+  pos[k * 3] = rest[k * 3] * R; pos[k * 3 + 1] = rest[k * 3 + 1] * R + R; pos[k * 3 + 2] = rest[k * 3 + 2] * R;
+}
+
+function impulse(strength, dirDown) {
+  for (let k = 0; k < N; k++) {
+    const rx = pos[k * 3] - ball.p.x, ry = pos[k * 3 + 1] - ball.p.y, rz = pos[k * 3 + 2] - ball.p.z;
+    const l = Math.hypot(rx, ry, rz) || 1;
+    let f = strength * (0.6 + Math.random() * 0.8);
+    if (dirDown) f *= Math.max(0, -ry / l) ** 1.5 * 2.2 + 0.15;
+    vel[k * 3] += rx / l * f; vel[k * 3 + 1] += ry / l * f * (dirDown ? 0.4 : 1) + (dirDown ? Math.abs(f) * 0.5 : 0); vel[k * 3 + 2] += rz / l * f;
   }
-  ctl.update();r.render(scene,cam);
+}
+
+// --- arrastar para girar (o giro herda a velocidade do gesto)
+const el = renderer.domElement;
+let dragging = false, last = null, samples = [];
+const AX = new THREE.Vector3(), dq = new THREE.Quaternion();
+el.addEventListener('pointerdown', e => { dragging = true; el.classList.add('drag'); el.setPointerCapture(e.pointerId); last = {x: e.clientX, y: e.clientY, t: e.timeStamp}; samples = []; ball.w.multiplyScalar(0.2); });
+el.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const now = e.timeStamp, dx = e.clientX - last.x, dy = e.clientY - last.y, dt = Math.max(1, now - last.t) / 1000;
+  const k = 2.6 / Math.min(innerWidth, innerHeight) * Math.PI;
+  AX.set(dy, dx, 0); const ang = AX.length() * k;
+  if (ang > 0) {
+    AX.normalize().applyQuaternion(cam.quaternion);
+    dq.setFromAxisAngle(AX, ang); ball.q.premultiply(dq);
+    samples.push({w: AX.clone().multiplyScalar(ang / dt), t: now});
+  }
+  samples = samples.filter(s => now - s.t < 150);
+  last = {x: e.clientX, y: e.clientY, t: now};
+});
+function release(e) {
+  if (!dragging) return; dragging = false; el.classList.remove('drag');
+  const now = e && e.timeStamp ? e.timeStamp : performance.now();
+  let recent = samples.filter(s => now - s.t < 150);
+  if (!recent.length && samples.length && now - samples[samples.length - 1].t < 300) recent = samples.slice(-3);
+  if (recent.length) {
+    const w = new THREE.Vector3(); recent.forEach(s => w.add(s.w)); w.divideScalar(recent.length);
+    if (w.length() > 60) w.setLength(60);
+    ball.w.copy(w);
+  }
+}
+el.addEventListener('pointerup', release); el.addEventListener('pointercancel', release);
+el.addEventListener('wheel', e => { camDist = THREE.MathUtils.clamp(camDist * (1 + e.deltaY * 0.001), 0.45, 3); placeCam(); e.preventDefault(); }, {passive: false});
+
+const $ = id => document.getElementById(id);
+$('bounce').onclick = e => {
+  bouncing = !bouncing; e.target.classList.toggle('on', bouncing);
+  if (bouncing && ball.p.y <= R + 0.001) ball.v.y = Math.sqrt(-2 * GRAV * DROP_H);
+};
+$('boom').onclick = () => impulse(2.4, false);
+addEventListener('resize', () => { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); placeCam(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
+
+// --- simulação
+const K = 260, CREL = 13, CABS = 0.6, SPREAD = 0.0022;
+let prev = performance.now();
+const tgtPrev = new Float32Array(N * 3); let first = true;
+const spd = $('spd');
+function step(dt) {
+  // bola: gravidade e quique
+  if (bouncing || ball.p.y > R + 1e-4 || ball.v.y > 0) {
+    ball.v.y += GRAV * dt; ball.p.y += ball.v.y * dt;
+    if (ball.p.y < R) {
+      const impact = -ball.v.y;
+      ball.p.y = R;
+      if (impact > 0.25) {
+        impulse(Math.min(impact, 4) * 0.55, true);
+        ball.squash = Math.min(0.22, impact * 0.05);
+        ball.v.y = bouncing ? Math.max(impact * REST, Math.sqrt(-2 * GRAV * DROP_H)) : impact * REST * 0.85;
+        ball.w.x += (Math.random() - 0.5) * 0.6;
+      } else ball.v.y = 0;
+    }
+  }
+  ball.squash *= Math.exp(-dt * 9);
+  // giro: atrito do ar
+  if (!dragging) {
+    const wl = ball.w.length();
+    if (wl > 1e-4) { AX.copy(ball.w).normalize(); dq.setFromAxisAngle(AX, wl * dt); ball.q.premultiply(dq); }
+    ball.w.multiplyScalar(Math.exp(-dt * 0.35));
+    if (wl < 0.25 && !bouncing) ball.w.y += (0.35 - ball.w.y) * dt * 0.5;
+  }
+  qm.makeRotationFromQuaternion(ball.q); m3.setFromMatrix4(qm);
+  const e = m3.elements, sq = ball.squash, sy = 1 - sq, sxz = 1 + sq * 0.55;
+  const wx = ball.w.x, wy = ball.w.y, wz = ball.w.z, w2 = wx * wx + wy * wy + wz * wz;
+  const bx = ball.p.x, by = ball.p.y, bz = ball.p.z;
+  for (let k = 0; k < N; k++) {
+    const k3 = k * 3, rx = rest[k3], ry = rest[k3 + 1], rz = rest[k3 + 2];
+    let tx = (e[0] * rx + e[3] * ry + e[6] * rz) * R * sxz;
+    let ty = (e[1] * rx + e[4] * ry + e[7] * rz) * R * sy;
+    let tz = (e[2] * rx + e[5] * ry + e[8] * rz) * R * sxz;
+    // força centrífuga: afasta do eixo de giro
+    if (w2 > 0.5) {
+      const dot = (tx * wx + ty * wy + tz * wz) / w2;
+      const px = tx - wx * dot, py = ty - wy * dot, pz = tz - wz * dot;
+      const f = 1 + Math.min(w2 * SPREAD, 0.9) * (seamFlag[k] ? 0.6 : 1);
+      tx = wx * dot + px * f; ty = wy * dot + py * f; tz = wz * dot + pz * f;
+    }
+    tx += bx; ty += by; tz += bz;
+    const tvx = first ? 0 : (tx - tgtPrev[k3]) / dt, tvy = first ? 0 : (ty - tgtPrev[k3 + 1]) / dt, tvz = first ? 0 : (tz - tgtPrev[k3 + 2]) / dt;
+    tgtPrev[k3] = tx; tgtPrev[k3 + 1] = ty; tgtPrev[k3 + 2] = tz;
+    const kk = K * stiff[k];
+    let vx = vel[k3], vy = vel[k3 + 1], vz = vel[k3 + 2];
+    vx += (kk * (tx - pos[k3]) - CREL * (vx - tvx) - CABS * vx) * dt;
+    vy += (kk * (ty - pos[k3 + 1]) - CREL * (vy - tvy) - CABS * vy) * dt;
+    vz += (kk * (tz - pos[k3 + 2]) - CREL * (vz - tvz) - CABS * vz) * dt;
+    let nx = pos[k3] + vx * dt, ny = pos[k3 + 1] + vy * dt, nz = pos[k3 + 2] + vz * dt;
+    if (ny < 0.0015) { ny = 0.0015; vy = Math.abs(vy) * 0.3; vx *= 0.9; vz *= 0.9; }
+    pos[k3] = nx; pos[k3 + 1] = ny; pos[k3 + 2] = nz; vel[k3] = vx; vel[k3 + 1] = vy; vel[k3 + 2] = vz;
+  }
+  first = false;
+}
+renderer.setAnimationLoop(now => {
+  let dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+  const sub = Math.ceil(dt / 0.008); dt /= sub;
+  for (let s = 0; s < sub; s++) step(dt);
+  geo.attributes.position.needsUpdate = true;
+  const h = Math.max(0, ball.p.y - R);
+  const gs = 0.42 + h * 0.8; glow.scale.set(gs, gs, 1); glow.material.opacity = 0.16 / (1 + h * 6);
+  const rps = ball.w.length() / (2 * Math.PI);
+  spd.textContent = rps > 0.3 ? rps.toFixed(1) + ' voltas/s' : '';
+  composer.render();
 });
 </script></body></html>

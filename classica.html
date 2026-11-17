@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bola de basquete 3D</title>
+<style>
+html,body{margin:0;height:100%;background:#1c1d20;font-family:system-ui,sans-serif;overflow:hidden;color:#ddd}
+#ui{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+button{border:1px solid #e8692c;border-radius:999px;padding:10px 18px;background:transparent;color:#f0f0f0;font-size:14px;cursor:pointer}
+button.on{background:#e8692c;color:#111}
+#hint{position:fixed;top:18px;width:100%;text-align:center;color:#999;font-size:14px}
+#load{position:fixed;inset:0;display:grid;place-items:center;color:#999}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head><body>
+<div id="load">Carregando bola…</div>
+<div id="hint">Arraste para girar · role ou pince para zoom</div>
+<div id="ui">
+<button id="rot" class="on">Girar</button>
+<button id="bounce">Quicar</button>
+<button id="reset">Recentralizar</button>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+const GLB="bola_basquete.glb";
+const r=new THREE.WebGLRenderer({antialias:true});
+r.setPixelRatio(Math.min(devicePixelRatio,2));r.setSize(innerWidth,innerHeight);
+r.shadowMap.enabled=true;r.shadowMap.type=THREE.PCFSoftShadowMap;
+r.toneMapping=THREE.ACESFilmicToneMapping;r.toneMappingExposure=1.0;
+document.body.appendChild(r.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x1c1d20);
+scene.fog=new THREE.Fog(0x1c1d20,2.5,6);
+scene.environment=new THREE.PMREMGenerator(r).fromScene(new RoomEnvironment(),0.04).texture;
+scene.environmentIntensity=0.6;
+const cam=new THREE.PerspectiveCamera(35,innerWidth/innerHeight,0.01,50);
+const HOME=new THREE.Vector3(0.55,0.32,0.75);cam.position.copy(HOME);
+const key=new THREE.DirectionalLight(0xfff4e8,2.2);key.position.set(1.2,2.2,1.0);key.castShadow=true;
+key.shadow.mapSize.set(2048,2048);key.shadow.radius=6;Object.assign(key.shadow.camera,{left:-0.6,right:0.6,top:0.6,bottom:-0.6,near:0.1,far:6});scene.add(key);
+const rim=new THREE.DirectionalLight(0x9fb8ff,0.8);rim.position.set(-1.5,0.8,-1.2);scene.add(rim);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(20,20),new THREE.MeshStandardMaterial({color:0x2a2b2f,roughness:0.85}));
+floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
+const ctl=new OrbitControls(cam,r.domElement);ctl.enableDamping=true;ctl.autoRotate=true;ctl.autoRotateSpeed=1.2;
+ctl.minDistance=0.3;ctl.maxDistance=3;ctl.maxPolarAngle=Math.PI*0.49;
+const TARGET=new THREE.Vector3(0,0.12,0);ctl.target.copy(TARGET);
+let ball=null,rad=0.12,bouncing=false,t0=0;
+new GLTFLoader().load(GLB,g=>{
+  ball=new THREE.Group();const m=g.scene;
+  const box=new THREE.Box3().setFromObject(m),c=box.getCenter(new THREE.Vector3()),s=box.getSize(new THREE.Vector3());
+  m.position.sub(c);rad=Math.max(s.x,s.y,s.z)/2;
+  m.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
+  ball.add(m);ball.position.y=rad;scene.add(ball);
+  TARGET.set(0,rad,0);ctl.target.copy(TARGET);ctl.update();document.getElementById('load').remove();
+});
+const $=id=>document.getElementById(id);
+$('rot').onclick=e=>{ctl.autoRotate=!ctl.autoRotate;e.target.classList.toggle('on',ctl.autoRotate)};
+$('bounce').onclick=e=>{bouncing=!bouncing;t0=performance.now();e.target.classList.toggle('on',bouncing);if(!bouncing&&ball){ball.position.y=rad;ball.scale.set(1,1,1)}};
+$('reset').onclick=()=>{cam.position.copy(HOME);ctl.target.copy(TARGET)};
+addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();r.setSize(innerWidth,innerHeight)});
+r.setAnimationLoop(now=>{
+  if(ball&&bouncing){
+    const T=0.7,p=((now-t0)/1000%T)/T,h=4*p*(1-p);
+    const y=rad+h*0.16;let sq=1;
+    if(h<0.06){sq=1-0.12*(1-h/0.06);}
+    ball.position.y=rad*sq+(y-rad);ball.scale.set(1+(1-sq)*0.6,sq,1+(1-sq)*0.6);
+    ball.rotation.x+=0.03;
+  }
+  ctl.update();r.render(scene,cam);
+});
+</script></body></html>
