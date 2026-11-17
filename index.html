@@ -27,7 +27,8 @@ import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 
-const R = 0.12, GRAV = -9.8, REST = 0.8, DROP_H = 0.32;
+const R = 0.12, GRAV = -3.2, REST = 0.8, DROP_H = 0.32;
+const V_DROP = Math.sqrt(-2 * GRAV * DROP_H);
 const N_BODY = 16000, N_SEAM = 6000, N = N_BODY + N_SEAM;
 
 const renderer = new THREE.WebGLRenderer({antialias: false});
@@ -81,6 +82,7 @@ function randUnit(out) {
 // --- partículas
 const rest = new Float32Array(N * 3), pos = new Float32Array(N * 3), vel = new Float32Array(N * 3);
 const col = new Float32Array(N * 3), stiff = new Float32Array(N), seamFlag = new Uint8Array(N), loose = new Float32Array(N);
+const mode = new Uint8Array(N), magT = new Float32Array(N);
 const BODY = new THREE.Color(1.0, 0.36, 0.06), BODY2 = new THREE.Color(1.0, 0.55, 0.15), SEAM = new THREE.Color(0.18, 0.95, 1.0);
 const tmp = [0, 0, 0];
 let i = 0;
@@ -173,11 +175,25 @@ $('bounce').onclick = e => {
   bouncing = !bouncing; e.target.classList.toggle('on', bouncing);
   if (bouncing && ball.p.y <= R + 0.001) ball.v.y = Math.sqrt(-2 * GRAV * DROP_H);
 };
-$('boom').onclick = () => impulse(2.6, false);
+const boom = {phase: 0, t: 0, active: 0};
+$('boom').onclick = () => { if (boom.phase) return; boom.phase = 1; boom.t = 0; $('boom').classList.add('on'); };
+function burst() {
+  for (let k = 0; k < N; k++) {
+    const k3 = k * 3;
+    let dx = pos[k3] - ball.p.x, dy = pos[k3 + 1] - ball.p.y, dz = pos[k3 + 2] - ball.p.z;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    dx = dx / l + (Math.random() - 0.5) * 0.35; dy = dy / l + (Math.random() - 0.5) * 0.35 + 0.15; dz = dz / l + (Math.random() - 0.5) * 0.35;
+    const v0 = (0.75 + Math.random() * 1.15) * (seamFlag[k] ? 1.15 : 1);
+    vel[k3] = dx * v0; vel[k3 + 1] = dy * v0; vel[k3 + 2] = dz * v0;
+    mode[k] = 1; loose[k] = 0;
+  }
+  boom.phase = 2;
+}
 addEventListener('resize', () => { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); placeCam(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 
 // --- simulação
-const K = 260, CREL = 13, CABS = 0.6, SPREAD = 0.00045, LOOSE_T = 2.2, GRAV_P = -1.2;
+const K = 260, CREL = 13, CABS = 0.6, SPREAD = 0.00045, LOOSE_T = 3.0, GRAV_P = -1.0;
+const DRAG = 3.2, STOP_V = 0.07, MAG_MAX = 1.8, MAG_GAIN = 3.5, MAG_RAMP = 0.8, CONTRACT_T = 0.75;
 let prev = performance.now();
 const tgtPrev = new Float32Array(N * 3); let first = true;
 const spd = $('spd');
@@ -188,15 +204,23 @@ function step(dt) {
     if (ball.p.y < R) {
       const impact = -ball.v.y;
       ball.p.y = R;
-      if (impact > 0.25) {
-        impulse(Math.min(impact, 4) * 1.15, true);
+      if (impact > 0.12) {
+        impulse(Math.min(impact / V_DROP, 1.5) * 2.4, true);
         ball.squash = Math.min(0.22, impact * 0.05);
-        ball.v.y = bouncing ? Math.max(impact * REST, Math.sqrt(-2 * GRAV * DROP_H)) : impact * REST * 0.85;
+        ball.v.y = bouncing ? Math.max(impact * REST, V_DROP) : impact * REST * 0.85;
         ball.w.x += (Math.random() - 0.5) * 0.6;
       } else ball.v.y = 0;
     }
   }
-  ball.squash *= Math.exp(-dt * 9);
+  ball.squash *= Math.exp(-dt * 6);
+  // explosão: contrai, ganha força e estoura
+  let contract = 1, jit = 0;
+  if (boom.phase === 1) {
+    boom.t += dt; const c = Math.min(1, boom.t / CONTRACT_T), ce = c * c * c;
+    contract = 1 - 0.4 * ce; jit = 0.006 * ce;
+    bloom.strength = 0.85 + 1.4 * ce;
+    if (c >= 1) burst();
+  }
   // giro: atrito do ar
   if (!dragging) {
     const wl = ball.w.length();
@@ -209,7 +233,8 @@ function step(dt) {
   const wx = ball.w.x, wy = ball.w.y, wz = ball.w.z, w2 = wx * wx + wy * wy + wz * wz;
   const bx = ball.p.x, by = ball.p.y, bz = ball.p.z;
   const flingP = Math.min(0.04, Math.max(0, (w2 - 30) * 0.00004)) * dt;
-  const decay = Math.exp(-dt / LOOSE_T), wl = Math.sqrt(w2);
+  const decay = Math.exp(-dt / LOOSE_T), wl = Math.sqrt(w2), fdrag = Math.exp(-DRAG * dt), blendM = 1 - Math.exp(-6 * dt);
+  let active = 0;
   for (let k = 0; k < N; k++) {
     const k3 = k * 3, rx = rest[k3], ry = rest[k3 + 1], rz = rest[k3 + 2];
     let tx = (e[0] * rx + e[3] * ry + e[6] * rz) * R * sxz;
@@ -222,10 +247,32 @@ function step(dt) {
       const f = 1 + Math.min(w2 * SPREAD, 0.3) * (seamFlag[k] ? 0.6 : 1);
       tx = wx * dot + px * f; ty = wy * dot + py * f; tz = wz * dot + pz * f;
     }
+    if (contract !== 1) { tx = tx * contract + (Math.random() - 0.5) * jit; ty = ty * contract + (Math.random() - 0.5) * jit; tz = tz * contract + (Math.random() - 0.5) * jit; }
     tx += bx; ty += by; tz += bz;
     const tvx = first ? 0 : (tx - tgtPrev[k3]) / dt, tvy = first ? 0 : (ty - tgtPrev[k3 + 1]) / dt, tvz = first ? 0 : (tz - tgtPrev[k3 + 2]) / dt;
     tgtPrev[k3] = tx; tgtPrev[k3 + 1] = ty; tgtPrev[k3 + 2] = tz;
     let vx = vel[k3], vy = vel[k3 + 1], vz = vel[k3 + 2];
+    const md = mode[k];
+    if (md) {
+      active++;
+      if (md === 1) {
+        // voo livre: perde força com o arrasto até quase parar
+        vx *= fdrag; vy *= fdrag; vz *= fdrag;
+        if (vx * vx + vy * vy + vz * vz < STOP_V * STOP_V) { mode[k] = 2; magT[k] = 0; }
+      } else {
+        // ímã: começa devagar, acelera e chega suave
+        const ddx = tx - pos[k3], ddy = ty - pos[k3 + 1], ddz = tz - pos[k3 + 2];
+        const dist = Math.hypot(ddx, ddy, ddz) || 1e-6;
+        const mt = (magT[k] += dt), ramp = Math.min(1, mt / MAG_RAMP), re = ramp * ramp * (3 - 2 * ramp);
+        const sp = re * Math.min(MAG_MAX, dist * MAG_GAIN);
+        vx += (ddx / dist * sp + tvx - vx) * blendM; vy += (ddy / dist * sp + tvy - vy) * blendM; vz += (ddz / dist * sp + tvz - vz) * blendM;
+        if (dist < 0.004) { mode[k] = 0; vx = tvx; vy = tvy; vz = tvz; }
+      }
+      let nx = pos[k3] + vx * dt, ny = pos[k3 + 1] + vy * dt, nz = pos[k3 + 2] + vz * dt;
+      if (ny < 0.0015) { ny = 0.0015; vy = Math.abs(vy) * 0.3; }
+      pos[k3] = nx; pos[k3 + 1] = ny; pos[k3 + 2] = nz; vel[k3] = vx; vel[k3 + 1] = vy; vel[k3 + 2] = vz;
+      continue;
+    }
     if (flingP > 0 && !dragging && Math.random() < flingP) {
       const ox = pos[k3] - bx, oy = pos[k3 + 1] - by, oz = pos[k3 + 2] - bz, ol = Math.hypot(ox, oy, oz) || 1;
       const kick = wl * R * (0.5 + Math.random() * 1.1);
@@ -244,6 +291,8 @@ function step(dt) {
     pos[k3] = nx; pos[k3 + 1] = ny; pos[k3 + 2] = nz; vel[k3] = vx; vel[k3 + 1] = vy; vel[k3 + 2] = vz;
   }
   first = false;
+  boom.active = active;
+  if (boom.phase === 2 && active === 0) { boom.phase = 0; $('boom').classList.remove('on'); }
 }
 renderer.setAnimationLoop(now => {
   let dt = Math.min(0.05, (now - prev) / 1000); prev = now;
@@ -254,6 +303,7 @@ renderer.setAnimationLoop(now => {
   const gs = 0.42 + h * 0.8; glow.scale.set(gs, gs, 1); glow.material.opacity = 0.16 / (1 + h * 6);
   const rps = ball.w.length() / (2 * Math.PI);
   spd.textContent = rps > 0.3 ? rps.toFixed(1) + ' voltas/s' : '';
+  if (boom.phase !== 1) bloom.strength += (0.85 + (boom.phase === 2 ? 0.7 * boom.active / N : 0) - bloom.strength) * Math.min(1, dt * sub * 2);
   composer.render();
 });
 </script></body></html>
