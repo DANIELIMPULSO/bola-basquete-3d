@@ -20,12 +20,14 @@ a.btn,#tgl{border-color:#2ff0ff}
 #panel h3{margin:0 0 4px;font-size:14px;font-weight:500;color:#fff}
 #panel .grp{margin-top:12px;color:#ff9a55;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
 #reset{margin-top:14px;width:100%}
+#panel input[type=color]{width:44px;height:26px;border:1px solid #2a3b48;border-radius:6px;background:none;padding:0;cursor:pointer}
+#panel .crow{display:flex;align-items:center;justify-content:space-between;margin-top:8px;color:#cfd6df}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head><body>
 <div id="hint">Clique, arraste e solte: quanto mais rápido o gesto, mais rápido a bola gira · role para zoom</div>
 <div id="spd"></div>
-<div id="panel"><h3>Ajustes da simulação</h3><div id="sliders"></div><button id="reset">Restaurar padrão</button></div>
+<div id="panel" class="open"><h3>Ajustes da simulação</h3><div id="sliders"></div><button id="reset">Restaurar padrão</button></div>
 <div id="ui">
 <button data-mode="bounce">Quicar</button>
 <button data-mode="roam">Quicar pelo ambiente</button>
@@ -33,7 +35,7 @@ a.btn,#tgl{border-color:#2ff0ff}
 <button data-mode="rollSlow">Rolar devagar</button>
 <button data-mode="rollFast">Rolar rápido</button>
 <button id="boom">Explodir</button>
-<button id="tgl">Ajustes</button>
+<button id="tgl" class="on">Ajustes</button>
 <a class="btn" href="classica.html">Versão texturizada</a>
 </div>
 <script type="module">
@@ -49,7 +51,8 @@ const DEF = {
   rollSlow: 0.25, rollFast: 1.4, jumpH: 0.9, jumpSpin: 24,
   boomForce: 1.0, boomReturn: 0.9, contractT: 0.75,
   fling: 1.0, looseT: 2.0, spring: 260,
-  bloom: 0.85, size: 0.0034
+  bloom: 0.85, size: 0.0034,
+  cBody: '#ff5c0f', cBody2: '#ff8c26', cSeam: '#2ef2ff', cGlow: '#ff6a1a'
 };
 const SLIDERS = [
   ['Quique'],
@@ -132,8 +135,7 @@ function randUnit(out) {
 }
 const rest = new Float32Array(N * 3), pos = new Float32Array(N * 3), vel = new Float32Array(N * 3);
 const col = new Float32Array(N * 3), stiff = new Float32Array(N), seamFlag = new Uint8Array(N), loose = new Float32Array(N);
-const mode = new Uint8Array(N), magT = new Float32Array(N);
-const BODY = new THREE.Color(1.0, 0.36, 0.06), BODY2 = new THREE.Color(1.0, 0.55, 0.15), SEAM = new THREE.Color(0.18, 0.95, 1.0);
+const mode = new Uint8Array(N), magT = new Float32Array(N), varr = new Float32Array(N);
 const tmp = [0, 0, 0];
 let i = 0;
 const golden = Math.PI * (3 - Math.sqrt(5)), M = Math.round(N_BODY * 1.25);
@@ -142,18 +144,16 @@ for (let k = 0; k < M && i < N_BODY; k++) {
   const x = rr * Math.cos(th), y = yy, z = rr * Math.sin(th);
   if (seamDist(x, y, z) < 0.03) continue;
   rest.set([x, y, z], i * 3);
-  const c = BODY.clone().lerp(BODY2, Math.random() * 0.6);
-  col.set([c.r, c.g, c.b], i * 3);
+  varr[i] = Math.random() * 0.6;
   stiff[i] = 0.75 + Math.random() * 0.5; i++;
 }
 while (i < N_BODY) {
   randUnit(tmp); if (seamDist(tmp[0], tmp[1], tmp[2]) < 0.03) continue;
-  rest.set(tmp, i * 3); col.set([BODY.r, BODY.g, BODY.b], i * 3); stiff[i] = 1; i++;
+  rest.set(tmp, i * 3); varr[i] = Math.random() * 0.6; stiff[i] = 1; i++;
 }
 while (i < N) {
   randUnit(tmp); if (seamDist(tmp[0], tmp[1], tmp[2]) > 0.016) continue;
   rest.set([tmp[0] * 0.985, tmp[1] * 0.985, tmp[2] * 0.985], i * 3);
-  col.set([SEAM.r, SEAM.g, SEAM.b], i * 3);
   stiff[i] = 1.2 + Math.random() * 0.4; seamFlag[i] = 1; i++;
 }
 const geo = new THREE.BufferGeometry();
@@ -270,8 +270,39 @@ for (const s of SLIDERS) {
   inp.oninput = () => { P[key] = +inp.value; show(); apply(); };
   show(); row.append(inp, out); box.append(lab, row); inputs[key] = {inp, show};
 }
-function apply() { mat.size = P.size; }
+const C1 = new THREE.Color(), C2 = new THREE.Color(), C3 = new THREE.Color();
+function paint() {
+  C1.set(P.cBody); C2.set(P.cBody2); C3.set(P.cSeam);
+  for (let k = 0; k < N; k++) {
+    if (seamFlag[k]) { col[k * 3] = C3.r; col[k * 3 + 1] = C3.g; col[k * 3 + 2] = C3.b; continue; }
+    const t = varr[k] / 0.6;
+    col[k * 3] = C1.r + (C2.r - C1.r) * t; col[k * 3 + 1] = C1.g + (C2.g - C1.g) * t; col[k * 3 + 2] = C1.b + (C2.b - C1.b) * t;
+  }
+  geo.attributes.color.needsUpdate = true;
+  glow.material.color.set(P.cGlow);
+}
+function apply() { mat.size = P.size; paint(); }
+const COLORS = [['cBody', 'Corpo (tom principal)'], ['cBody2', 'Corpo (variação)'], ['cSeam', 'Costuras'], ['cGlow', 'Brilho no chão']];
+{ const g = document.createElement('div'); g.className = 'grp'; g.textContent = 'Cores'; box.prepend(g);
+  const holder = document.createElement('div'); g.after(holder);
+  for (const [key, label] of COLORS) {
+    const r = document.createElement('div'); r.className = 'crow';
+    const inp = document.createElement('input'); inp.type = 'color'; inp.value = P[key];
+    inp.oninput = () => { P[key] = inp.value; paint(); };
+    r.append(Object.assign(document.createElement('span'), {textContent: label}), inp); holder.appendChild(r);
+    inputs[key] = {inp, show() {}};
+  }
+  const pr = document.createElement('div'); pr.className = 'crow'; pr.style.flexWrap = 'wrap'; pr.style.gap = '6px'; pr.style.justifyContent = 'flex-start';
+  const PRESETS = {'Basquete': ['#ff5c0f', '#ff8c26', '#2ef2ff', '#ff6a1a'], 'Cyberpunk': ['#ff2bd6', '#7a2bff', '#00fff0', '#ff2bd6'], 'Matrix': ['#00ff66', '#0a8f3c', '#d4ffe0', '#00ff66'], 'Fogo': ['#ff2a00', '#ffd000', '#ffffff', '#ff4a00'], 'Gelo': ['#4fc3ff', '#e8f7ff', '#ffffff', '#4fc3ff']};
+  for (const [name, cs] of Object.entries(PRESETS)) {
+    const b = document.createElement('button'); b.textContent = name; b.style.padding = '5px 10px'; b.style.fontSize = '12px';
+    b.onclick = () => { ['cBody', 'cBody2', 'cSeam', 'cGlow'].forEach((k, j) => { P[k] = cs[j]; inputs[k].inp.value = cs[j]; }); paint(); };
+    pr.appendChild(b);
+  }
+  holder.appendChild(pr);
+}
 $('reset').onclick = () => { Object.assign(P, DEF); for (const k in inputs) { inputs[k].inp.value = P[k]; inputs[k].show(); } apply(); };
+paint();
 $('tgl').onclick = () => { $('panel').classList.toggle('open'); $('tgl').classList.toggle('on'); };
 ['pointerdown', 'wheel'].forEach(ev => $('panel').addEventListener(ev, e => e.stopPropagation()));
 
