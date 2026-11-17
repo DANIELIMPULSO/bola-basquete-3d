@@ -35,6 +35,7 @@ a.btn,#tgl{border-color:#2ff0ff}
 <button data-mode="rollSlow">Rolar devagar</button>
 <button data-mode="rollFast">Rolar rápido</button>
 <button id="boom">Explodir</button>
+<button id="home">Resetar posição</button>
 <button id="tgl" class="on">Ajustes</button>
 <a class="btn" href="classica.html">Versão texturizada</a>
 </div>
@@ -242,6 +243,14 @@ $('jump').onclick = () => {
   impulse(P.impact * 0.6, 'down');
 };
 const boom = {phase: 0, t: 0, active: 0};
+$('home').onclick = () => {
+  if (ball.mode !== 'idle') setMode('idle');
+  ball.p.set(0, R, 0); ball.v.set(0, 0, 0); ball.w.set(0, 0.6, 0); ball.q.identity(); ball.squash = 0; ball.rollSp = 0;
+  boom.t = 0; if (boom.phase === 1) boom.phase = 0;
+  // as partículas voltam até a bola pelo efeito ímã
+  for (let k = 0; k < N; k++) { mode[k] = 2; magT[k] = 0.4; loose[k] = 0; }
+  boom.phase = 2; $('boom').classList.remove('on');
+};
 $('boom').onclick = () => { if (boom.phase) return; boom.phase = 1; boom.t = 0; $('boom').classList.add('on'); };
 function burst() {
   for (let k = 0; k < N; k++) {
